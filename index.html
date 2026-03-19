@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地鼠大冒險 - 完整 3D 黏土版</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        :root {
+            --pastel-sky: #BEE3F8;
+            --pastel-grass: #C6F6D5;
+            --clay-brown: #975A16;
+            --hat-yellow: #F6E05E;
+        }
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--pastel-sky);
+            overflow: hidden;
+            user-select: none;
+        }
+        .game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: linear-gradient(to bottom, var(--pastel-sky) 0%, #FFF9C4 30%, var(--pastel-grass) 30%, #68D391 100%);
+        }
+
+        .game-hud {
+            width: 85%;
+            max-width: 550px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(10px);
+            padding: 15px 25px;
+            border-radius: 30px;
+            margin-top: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            z-index: 200;
+        }
+        .hud-top, .hud-bottom { display: flex; justify-content: space-between; align-items: center; }
+        .label { font-size: 13px; font-weight: bold; color: #718096; }
+        .value { font-size: 28px; font-weight: 900; color: #2D3748; }
+        
+        .game-board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 30px;
+            padding: 20px;
+            margin-top: auto;
+            margin-bottom: auto;
+        }
+
+        /* 新的地洞結構 */
+        .hole-container {
+            position: relative;
+            width: 160px;
+            height: 180px; /* 增加高度以容納整隻地鼠 */
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            overflow: hidden; /* 確保地鼠縮下去時完全不見 */
+        }
+
+        /* 洞穴底部的深色陰影 */
+        .hole-base {
+            position: absolute;
+            bottom: 20px;
+            width: 140px;
+            height: 50px;
+            background: #232934;
+            border-radius: 50%;
+            z-index: 5;
+            box-shadow: inset 0 10px 20px rgba(0,0,0,0.8);
+        }
+
+        /* 前方的泥土堆 (蓋在地鼠前面) */
+        .dirt-front {
+            position: absolute;
+            bottom: 0;
+            width: 160px;
+            height: 60px;
+            background: #8B4513;
+            border-radius: 50%;
+            z-index: 20; /* 位於地鼠之上 */
+            border-bottom: 8px solid #652B19;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        /* 地鼠容器 */
+        .mole-wrapper {
+            position: absolute;
+            width: 110px;
+            height: 150px;
+            bottom: -160px; /* 初始位置在泥土下方 */
+            z-index: 10; /* 位於 hole-base 之後，dirt-front 之前 */
+            transition: bottom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            cursor: pointer;
+        }
+
+        .mole-wrapper.visible {
+            bottom: 30px; /* 冒出頭部的高度，確保整顆頭都露出來 */
+        }
+
+        .mole-wrapper.hit {
+            animation: hitReaction 0.5s ease-out forwards;
+        }
+
+        @keyframes hitReaction {
+            0% { transform: scale(1); }
+            30% { transform: scale(1.3, 0.7) translateY(20px); filter: brightness(1.5); }
+            100% { transform: scale(0); opacity: 0; }
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(15px);
+        }
+        .btn {
+            padding: 20px 60px;
+            font-size: 32px;
+            font-weight: 900;
+            background: #F6E05E;
+            color: #2D3748;
+            border: none;
+            border-radius: 60px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 30px;
+            box-shadow: 0 12px 0 #D69E2E;
+        }
+        .btn:active { transform: translateY(8px); box-shadow: 0 4px 0 #D69E2E; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // --- 黏土 3D 地鼠圖形 ---
+        const MoleSprite = ({ type }) => {
+            const getColor = () => {
+                switch(type) {
+                    case 'yellow': return { p: '#FBD38D', s: '#ED8936' };
+                    case 'red': return { p: '#FC8181', s: '#E53E3E' };
+                    case 'hammer': return { p: '#B794F4', s: '#805AD5' };
+                    case 'net': return { p: '#81E6D9', s: '#319795' };
+                    default: return { p: '#A0522D', s: '#652B19' };
+                }
+            };
+            const c = getColor();
+            
+            return (
+                <svg viewBox="0 0 120 150" style={{width: '100%', height: '100%', filter: 'drop-shadow(0 5px 10px rgba(0,0,0,0.1))'}}>
+                    <defs>
+                        <filter id="clayFilter">
+                            <feGaussianBlur in="SourceAlpha" stdDeviation="2.5" result="blur" />
+                            <feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.7" specularExponent="20" lightingColor="#white" result="specOut">
+                                <fePointLight x="-50" y="-50" z="100" />
+                            </feSpecularLighting>
+                            <feComposite in="specOut" in2="SourceAlpha" operator="in" result="specOut" />
+                            <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" />
+                        </filter>
+                    </defs>
+
+                    <g filter="url(#clayFilter)">
+                        {/* 圓滾滾的身軀 */}
+                        <ellipse cx="60" cy="115" rx="45" ry="30" fill={c.s} />
+                        <circle cx="60" cy="75" r="50" fill={c.p} />
+                        
+                        {/* 黃色工程帽 */}
+                        <g transform="translate(60, 30)">
+                            <path d="M-28,0 Q0,-35 28,0 Z" fill="#F6E05E" stroke="#D69E2E" strokeWidth="2" />
+                            <rect x="-32" y="0" width="64" height="6" rx="3" fill="#ECC94B" />
+                        </g>
+                        
+                        {/* 閃亮大眼睛 */}
+                        <g>
+                            <circle cx="40" cy="70" r="11" fill="white" />
+                            <circle cx="80" cy="70" r="11" fill="white" />
+                            <circle cx="40" cy="70" r="7" fill="#1A202C" />
+                            <circle cx="80" cy="70" r="7" fill="#1A202C" />
+                            <circle cx="43" cy="66" r="3.5" fill="white" />
+                            <circle cx="83" cy="66" r="3.5" fill="white" />
+                        </g>
+                        
+                        {/* 腮紅與紅鼻子 */}
+                        <circle cx="28" cy="85" r="8" fill="#FED7E2" opacity="0.6" />
+                        <circle cx="92" cy="85" r="8" fill="#FED7E2" opacity="0.6" />
+                        <ellipse cx="60" cy="88" rx="10" ry="7" fill="#F56565" />
+                        
+                        {/* 微笑與門牙 */}
+                        <path d="M45 105 Q60 118 75 105" fill="none" stroke="#652B19" strokeWidth="4" strokeLinecap="round" />
+                        <rect x="54" y="108" width="5" height="8" fill="white" rx="1" />
+                        <rect x="61" y="108" width="5" height="8" fill="white" rx="1" />
+                    </g>
+                </svg>
+            );
+        };
+
+        const App = () => {
+            const [gameState, setGameState] = useState('MENU');
+            const [score, setScore] = useState(0);
+            const [lives, setLives] = useState(5);
+            const [level, setLevel] = useState(1);
+            const [timeLeft, setTimeLeft] = useState(60);
+            const [activeMoles, setActiveMoles] = useState(Array(9).fill(null));
+            const [hitMoles, setHitMoles] = useState(Array(9).fill(false));
+
+            const spawnMole = useCallback(() => {
+                if (gameState !== 'PLAYING') return;
+                const empty = activeMoles.map((m, i) => m === null ? i : -1).filter(i => i !== -1);
+                if (empty.length === 0) return;
+                const idx = empty[Math.floor(Math.random() * empty.length)];
+                
+                const rand = Math.random();
+                let type = rand < 0.1 ? 'hammer' : rand < 0.2 ? 'red' : rand < 0.4 ? 'yellow' : 'brown';
+                
+                const next = [...activeMoles]; next[idx] = type; setActiveMoles(next);
+                let stay = Math.max(1600 - level * 200, 700);
+
+                setTimeout(() => {
+                    setActiveMoles(prev => {
+                        if (prev[idx] && !hitMoles[idx] && ['brown','yellow','red'].includes(prev[idx])) setLives(l => l - 1);
+                        const n = [...prev]; n[idx] = null; return n;
+                    });
+                    setHitMoles(prev => { const n = [...prev]; n[idx] = false; return n; });
+                }, stay);
+            }, [activeMoles, gameState, level, hitMoles]);
+
+            useEffect(() => {
+                if (gameState === 'PLAYING') {
+                    const t = setInterval(() => setTimeLeft(p => p - 1), 1000);
+                    const s = setInterval(spawnMole, 1200);
+                    return () => { clearInterval(t); clearInterval(s); };
+                }
+            }, [gameState, spawnMole]);
+
+            useEffect(() => {
+                if (lives <= 0 || timeLeft <= 0) setGameState('GAMEOVER');
+            }, [lives, timeLeft]);
+
+            const onHit = (idx, type) => {
+                if (hitMoles[idx]) return;
+                const n = [...hitMoles]; n[idx] = true; setHitMoles(n);
+                setScore(s => s + (type === 'red' ? 5 : type === 'yellow' ? 3 : 1));
+                if (score >= level * 40 && level < 5) setGameState('LEVEL_CLEAR');
+            };
+
+            return (
+                <div className="game-container">
+                    {gameState === 'MENU' && (
+                        <div className="overlay">
+                            <h1>地鼠大冒險</h1>
+                            <p style={{fontSize: '24px', color: '#718096'}}>戴工程帽的 3D 黏土地鼠來囉！</p>
+                            <button className="btn" onClick={() => setGameState('PLAYING')}>開始冒險</button>
+                        </div>
+                    )}
+                    
+                    {gameState === 'PLAYING' && (
+                        <>
+                            <div className="game-hud">
+                                <div className="hud-top">
+                                    <div className="hud-item"><span className="label">關卡</span><span className="value">{level}</span></div>
+                                    <div className="hud-item"><span className="label">時間</span><span className="value">{timeLeft}s</span></div>
+                                    <div className="hud-item"><span className="label">生命</span><div style={{fontSize:'20px'}}>{Array.from({length:5}).map((_,i)=>i<lives?'❤️':'🖤')}</div></div>
+                                </div>
+                                <div className="hud-bottom">
+                                    <div className="hud-item"><span className="label">得分</span><span className="value">{score}</span></div>
+                                </div>
+                            </div>
+                            <div className="game-board">
+                                {activeMoles.map((type, i) => (
+                                    <div key={i} className="hole-container">
+                                        <div className="hole-base"></div>
+                                        <div className={`mole-wrapper ${type ? 'visible' : ''} ${hitMoles[i] ? 'hit' : ''}`} onClick={() => onHit(i, type)}>
+                                            {type && <MoleSprite type={type} />}
+                                        </div>
+                                        <div className="dirt-front"></div>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+
+                    {gameState === 'LEVEL_CLEAR' && (
+                        <div className="overlay">
+                            <h1>太棒了！</h1>
+                            <button className="btn" onClick={() => { setLevel(l=>l+1); setGameState('PLAYING'); setTimeLeft(60); }}>下一關</button>
+                        </div>
+                    )}
+
+                    {gameState === 'GAMEOVER' && (
+                        <div className="overlay">
+                            <h1>冒險結束</h1>
+                            <p style={{fontSize: '32px'}}>得分: {score}</p>
+                            <button className="btn" onClick={() => setGameState('MENU')}>重新開始</button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
